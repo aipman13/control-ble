@@ -493,15 +493,6 @@ async function handleRecording() {
     const sampleRate = parseInt(getVal('voiceSampleRate', '16000'), 10);
     const wavBlob = pcmBytesToWavBlob(merged, sampleRate);
 
-// DEBUG SEMENTARA: unduh rekamannya biar bisa didengar langsung
-    const debugUrl = URL.createObjectURL(wavBlob);
-    const debugLink = document.createElement('a');
-    debugLink.href = debugUrl;
-    debugLink.download = 'debug_recording.wav';
-    debugLink.click();
-    URL.revokeObjectURL(debugUrl);
-    log('💾 Rekaman disimpan ke file (cek folder Download HP Anda).');
-
     log('🗣️ Menerjemahkan suara (Groq Whisper)...');
     const transcript = await groqTranscribe(wavBlob);
 
