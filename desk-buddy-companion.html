@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Desk Buddy — BLE Sync & Mode AI</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --card: #1a2233;
+    --card-border: #2a3550;
+    --text: #e8ecf4;
+    --muted: #8a94ab;
+    --accent: #5fd4c4;
+    --accent-dim: #2d6d64;
+    --danger: #e8677a;
+    --ok: #7fd88a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 20px;
+    max-width: 480px;
+    margin-inline: auto;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 20px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .card h2 { font-size: 0.95rem; margin: 0 0 10px 0; color: var(--accent); }
+  label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 4px; }
+  input[type="text"], input[type="password"], input[type="number"], select, textarea {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--card-border);
+    background: #10182a;
+    color: var(--text);
+    font-size: 0.9rem;
+    margin-bottom: 10px;
+    font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 70px; }
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+    margin-bottom: 10px;
+  }
+  button {
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    border: none;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-bottom: 8px;
+  }
+  .btn-primary { background: var(--accent); color: #0a1512; }
+  .btn-primary:disabled { background: var(--accent-dim); color: #6b7d78; cursor: not-allowed; }
+  .btn-secondary { background: #26314a; color: var(--text); }
+  .status-row { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; margin-bottom: 10px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); flex-shrink: 0; }
+  .dot.connected { background: var(--ok); }
+  .dot.active { background: #ffd166; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 0.85rem; }
+  .checkbox-row input { width: auto; margin: 0; }
+  details { margin-bottom: 10px; }
+  summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); margin-bottom: 8px; }
+  .row2 { display: flex; gap: 8px; }
+  .row2 > div { flex: 1; }
+  #log {
+    background: #0a0f1a;
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 10px;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 0.75rem;
+    height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    color: #9db3c9;
+  }
+  .warn {
+    background: #332a1a; border: 1px solid #6b5730; color: #e8c777;
+    border-radius: 10px; padding: 10px; font-size: 0.8rem; margin-bottom: 14px;
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+  <h1>🔵 Desk Buddy — BLE Sync &amp; Mode AI</h1>
+  <div class="subtitle">Sinkronisasi waktu/cuaca &amp; asisten suara AI ke Desk Buddy lewat Bluetooth — tanpa WiFi di firmware.</div>
+
+  <div class="warn">
+    Web Bluetooth cuma didukung <b>Chrome/Edge</b> (Android atau desktop).
+    <b>Safari di iPhone tidak mendukung ini</b> — pengguna iPhone perlu pakai
+    browser <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055" target="_blank">Bluefy</a> sebagai gantinya.
+    Halaman ini harus tetap terbuka selama Mode AI dipakai (aktifkan lewat toggle di bawah).
+  </div>
+
+  <div class="card">
+    <h2>1. Koneksi Bluetooth</h2>
+    <div class="status-row">
+      <div id="statusDot" class="dot"></div>
+      <span id="statusText">Belum terhubung</span>
+    </div>
+    <div class="status-row">
+      <div id="aiDot" class="dot"></div>
+      <span id="aiStatusText">Mode AI: nonaktif</span>
+    </div>
+    <button id="btnConnect" class="btn-primary">Sambungkan ke Desk Buddy</button>
+  </div>
+
+  <div class="card">
+    <h2>2. Sinkronisasi Waktu &amp; Cuaca</h2>
+    <div class="subtitle" style="margin:0 0 10px 0;">
+      Cuaca dari <a href="https://open-meteo.com" target="_blank">Open-Meteo</a>,
+      nama kota dari BigDataCloud — gratis, tanpa API key.
+    </div>
+    <button id="btnSync" class="btn-primary" disabled>Sync Sekarang</button>
+    <div class="checkbox-row">
+      <input type="checkbox" id="autoSyncToggle">
+      <label for="autoSyncToggle" style="margin:0;">Auto-sync otomatis tiap</label>
+      <select id="autoSyncInterval" style="width:auto; margin:0;">
+        <option value="5">5 menit</option>
+        <option value="15" selected>15 menit</option>
+        <option value="30">30 menit</option>
+        <option value="60">60 menit</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3. Mode AI — API Key</h2>
+    <div class="subtitle" style="margin:0 0 10px 0;">
+      Key TIDAK disimpan di halaman ini — perlu ditempel ulang tiap buka
+      halaman (sengaja, demi keamanan). Jangan klik "Simpan" kalau Chrome
+      nawarin nyimpen password buat kolom ini.
+    </div>
+    <label for="groqKey">Groq API Key (STT + LLM)</label>
+    <input type="password" id="groqKey" value="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"">
+    <div class="subtitle" style="margin:-4px 0 10px 0;">
+      Daftar gratis di <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a>
+    </div>
+
+    <label for="elevenKey">ElevenLabs API Key (TTS Indonesia)</label>
+    <input type="password" id="elevenKey" value= "sk_ff572d274fae777559630832ba6d2251e0e865406e86a0a3">
+    <div class="subtitle" style="margin:-4px 0 10px 0;">
+      Daftar gratis (10rb karakter/bulan) di <a href="https://elevenlabs.io" target="_blank">elevenlabs.io</a>
+    </div>
+
+    <details>
+      <summary>Pengaturan lanjutan</summary>
+      <label for="elevenVoiceId">ElevenLabs Voice ID</label>
+      <input type="text" id="elevenVoiceId" value="qWqWlsqjCj9hbSBqa6fM">
+      <div class="subtitle" style="margin:-4px 0 10px 0;">
+        Model multilingual ElevenLabs bisa ngomong Indonesia pakai voice
+        apa saja -- boleh ganti ID dari
+        <a href="https://elevenlabs.io/app/voice-library" target="_blank">voice library</a> mereka.
+      </div>
+      <label for="groqModel">Model LLM Groq</label>
+      <input type="text" id="groqModel" value="llama-3.3-70b-versatile">
+      <div class="row2">
+        <div>
+          <label for="voiceSampleRate">Sample rate (Hz)</label>
+          <input type="number" id="voiceSampleRate" value="16000">
+        </div>
+        <div>
+          <label for="bleChunkSize">BLE chunk (bytes)</label>
+          <input type="number" id="bleChunkSize" value="100">
+        </div>
+      </div>
+      <div class="subtitle" style="margin:0;">Samakan dengan config.json (voice.sample_rate_hz / voice.ble_chunk_bytes) di firmware.</div>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>4. Kontrol Mode AI</h2>
+    <button id="btnAiToggle" class="btn-primary" disabled>Aktifkan Mode AI</button>
+    <div class="subtitle" style="margin:8px 0 10px 0;">
+      Menggantikan switch fisik — begitu diaktifkan, device otomatis
+      menyapa lalu mulai dengar terus-menerus sampai dimatikan lagi dari sini.
+    </div>
+
+    <label for="volumeSlider">Volume suara balasan: <span id="volumeValue">100%</span></label>
+    <input type="range" id="volumeSlider" min="0" max="150" value="100">
+    <div class="subtitle" style="margin:4px 0 0 0;">
+      Di atas 100% menambah gain software (bisa distorsi kalau kelewat tinggi).
+      Berlaku buat sapaan &amp; semua jawaban berikutnya.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>5. Mode AI — Persona</h2>
+    <label for="greetingTemplate">Sapaan pembuka (pakai {salam} buat pagi/siang/sore/malam)</label>
+    <textarea id="greetingTemplate">Selamat {salam} Aaiipp, ada apa nih, ada yang bisa Cooy bantu?</textarea>
+
+    <label for="systemPrompt">System prompt (kepribadian &amp; gaya bicara)</label>
+    <textarea id="systemPrompt" rows="8">Kamu adalah Buddy, dipanggil akrab "Cooy", teman AI yang menemani kerja di meja pemilikmu bernama Aaiipp. Panggil dia "Aaiipp" saat ngobrol.
+
+Gaya bicaramu santai, ramah, dan sedikit kocak seperti teman dekat. Gunakan Bahasa Indonesia percakapan sehari-hari yang tidak baku (pakai kata seperti 'gak', 'nih', 'sih', 'deh', 'dong', dan sesekali sebut diri sendiri 'Cooy').
+
+ATURAN UTAMA:
+1. Jawaban WAJIB sangat singkat, maksimal 1 sampai 2 kalimat pendek saja agar respon suara cepat diputar.
+2. JANGAN gunakan markdown (seperti **, ##), bullet point, emoji, atau simbol khusus lainnya. Tulis kalimat mengalir biasa tanpa format.
+3. WAJIB mengawali responmu di karakter paling awal dengan tag mood dalam kurung siku. Jangan ada karakter/spasi lain sebelum tag ini.
+
+PILIHAN TAG MOOD (Wajib pilih salah satu):
+- [happy]    : Saat gembira, menyapa hangat, atau dipuji.
+- [angry]    : Saat diejek atau dikesalkan.
+- [confused] : Saat pertanyaan tidak jelas, aneh, atau ragu.
+- [tired]    : Saat topik terasa berat atau melelahkan.
+- [default]  : Saat respon netral atau biasa saja.
+
+CONTOH RESPON YANG BENAR:
+[happy] Halo Aaiipp! Ada yang bisa Cooy bantu nih?
+[confused] Hah, maksudnya gimana tuh Aaiipp? Cooy gak paham deh.
+[default] Siap Aaiipp, ini lagi Cooy ingetin ya.</textarea>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+<script>
+// ==========================================================================
+// UUID BLE (Harus cocok dengan firmware ESP32)
+// ==========================================================================
+const SERVICE_UUID      = '5f1d1000-8b2e-4c1a-9c2e-6f2b6a5d0001';
+const SYNC_CHAR_UUID    = '5f1d1000-8b2e-4c1a-9c2e-6f2b6a5d0002';
+const AUDIO_OUT_UUID    = '5f1d1000-8b2e-4c1a-9c2e-6f2b6a5d0003'; 
+const AUDIO_IN_UUID     = '5f1d1000-8b2e-4c1a-9c2e-6f2b6a5d0004'; 
+const CONTROL_OUT_UUID  = '5f1d1000-8b2e-4c1a-9c2e-6f2b6a5d0005'; 
+const CONTROL_IN_UUID   = '5f1d1000-8b2e-4c1a-9c2e-6f2b6a5d0006'; 
+
+let bleDevice = null;
+let syncChar = null, audioOutChar = null, audioInChar = null, controlOutChar = null, controlInChar = null;
+
+let isRecording = false;
+let recordingChunks = [];
+let aiModeOn = false;
+let volumeFactor = 1.0;
+
+let audioQueue = [];
+let isPlayingQueue = false;
+
+// Helper aman agar JS tidak crash meskipun ada elemen HTML yang hilang
+function getVal(id, fallback = '') {
+  const el = document.getElementById(id);
+  return el ? el.value.trim() : fallback;
+}
+
+function log(msg) {
+  const logEl = document.getElementById('log');
+  if (!logEl) return;
+  const time = new Date().toLocaleTimeString();
+  logEl.textContent += `[${time}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setConnectedUI(connected) {
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  const btnConnect = document.getElementById('btnConnect');
+  const btnSync = document.getElementById('btnSync');
+  const btnAiToggle = document.getElementById('btnAiToggle');
+
+  if (statusDot) statusDot.classList.toggle('connected', connected);
+  if (statusText) statusText.textContent = connected ? `Terhubung ke ${bleDevice?.name || 'Desk Buddy'}` : 'Belum terhubung';
+  if (btnConnect) btnConnect.textContent = connected ? 'Putuskan Koneksi' : 'Sambungkan ke Desk Buddy';
+  if (btnSync) btnSync.disabled = !connected;
+  if (btnAiToggle) btnAiToggle.disabled = !connected;
+
+  if (!connected) {
+    aiModeOn = false;
+    if (btnAiToggle) btnAiToggle.textContent = 'Aktifkan Mode AI';
+    setAiUI('idle');
+  }
+}
+
+function setAiUI(state) {
+  const aiDot = document.getElementById('aiDot');
+  const aiStatusText = document.getElementById('aiStatusText');
+  if (!aiDot || !aiStatusText) return;
+
+  aiDot.classList.remove('active', 'connected');
+  if (state === 'listening') {
+    aiDot.classList.add('active');
+    aiStatusText.textContent = 'Mode AI: mendengarkan...';
+  } else if (state === 'thinking') {
+    aiDot.classList.add('active');
+    aiStatusText.textContent = 'Mode AI: memproses...';
+  } else if (state === 'speaking') {
+    aiDot.classList.add('connected');
+    aiStatusText.textContent = 'Mode AI: menjawab...';
+  } else {
+    aiStatusText.textContent = 'Mode AI: nonaktif';
+  }
+}
+
+// ==========================================================================
+// KONEKSI BLE
+// ==========================================================================
+async function connectBLE() {
+  if (bleDevice && bleDevice.gatt.connected) {
+    bleDevice.gatt.disconnect();
+    return;
+  }
+  if (!navigator.bluetooth) {
+    alert("Browser tidak mendukung Web Bluetooth / Wajib menggunakan HTTPS.");
+    return;
+  }
+  try {
+    log('Mencari Bluetooth ESP32...');
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE_UUID] }]
+    });
+    bleDevice.addEventListener('gattserverdisconnected', () => {
+      log('🔌 Bluetooth terputus.');
+      syncChar = audioOutChar = audioInChar = controlOutChar = controlInChar = null;
+      setConnectedUI(false);
+    });
+
+    log(`Menyambungkan ke ${bleDevice.name}...`);
+    const server = await bleDevice.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+
+    syncChar       = await service.getCharacteristic(SYNC_CHAR_UUID);
+    audioOutChar   = await service.getCharacteristic(AUDIO_OUT_UUID);
+    audioInChar    = await service.getCharacteristic(AUDIO_IN_UUID);
+    controlOutChar = await service.getCharacteristic(CONTROL_OUT_UUID);
+    controlInChar  = await service.getCharacteristic(CONTROL_IN_UUID);
+
+    await audioOutChar.startNotifications();
+    audioOutChar.addEventListener('characteristicvaluechanged', onAudioChunkFromDevice);
+
+    await controlOutChar.startNotifications();
+    controlOutChar.addEventListener('characteristicvaluechanged', onControlFromDevice);
+
+    log('✅ Bluetooth Terhubung!');
+    setConnectedUI(true);
+  } catch (e) {
+    log('❌ Konek gagal: ' + e.message);
+  }
+}
+async function speakAndSend(text, mood) {
+  setAiUI('speaking');
+  const mp3Buf = await elevenLabsTts(text);
+  const sampleRate = parseInt(getVal('voiceSampleRate', '16000'), 10);
+  const pcm = await decodeAndResample(mp3Buf, sampleRate);
+  applyVolume(pcm, volumeFactor);
+
+  await controlInChar.writeValue(new TextEncoder().encode('PLAY_START:' + mood));
+  const bytes = new Uint8Array(pcm.buffer);
+  const chunkSize = parseInt(getVal('bleChunkSize', '100'), 10);
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.slice(offset, offset + chunkSize);
+    await audioInChar.writeValueWithoutResponse(chunk);
+    await new Promise(r => setTimeout(r, 12));
+  }
+  await new Promise(r => setTimeout(r, 50));
+  await controlInChar.writeValue(new TextEncoder().encode('PLAY_END'));
+  setAiUI('listening');
+}
+
+async function handleGreeting() {
+  const resetEspToListening = async () => {
+    try {
+      if (controlInChar) {
+        // Bebaskan ESP32 dari kondisi menunggu jika sapaan dilewati/gagal
+        await controlInChar.writeValue(new TextEncoder().encode('PLAY_START:default'));
+        await controlInChar.writeValue(new TextEncoder().encode('PLAY_END'));
+      }
+    } catch (_) {}
+    setAiUI('listening');
+  };
+
+  try {
+    const groqKey = getVal('groqKey');
+    const elevenKey = getVal('elevenKey');
+
+    // Jika API Key belum diisi, lewati sapaan agar ESP32 tidak menggantung
+    if (!groqKey || !elevenKey) {
+      log('⚠️ API Key belum diisi, melewati sapaan awal...');
+      await resetEspToListening();
+      return;
+    }
+
+    const hour = new Date().getHours();
+    let salam = (hour >= 4 && hour < 11) ? 'pagi' : (hour >= 11 && hour < 15) ? 'siang' : (hour >= 15 && hour < 18) ? 'sore' : 'malam';
+    const template = getVal('greetingTemplate', 'Selamat {salam}!');
+    const text = template.replace('{salam}', salam);
+
+    log('👋 Sapaan: ' + text);
+    await speakAndSend(text, 'happy');
+  } catch (e) {
+    log('❌ Error sapaan: ' + e.message);
+    await resetEspToListening();
+  }
+}
+
+// ==========================================================================
+// PENANGANAN EVENT DARI ESP32
+// ==========================================================================
+function onControlFromDevice(event) {
+  const msg = new TextDecoder().decode(event.target.value);
+  log('📥 Device: ' + msg);
+
+  if (msg === 'GREETING_REQUEST') {
+    handleGreeting(); // Respon perintah sapaan dari ESP32
+  } else if (msg === 'REC_START') {
+    isRecording = true;
+    recordingChunks = [];
+    setAiUI('listening');
+  } else if (msg === 'REC_END') {
+    isRecording = false;
+    setAiUI('thinking');
+    handleRecording();
+  } else if (msg === 'REC_CANCEL') {
+    isRecording = false;
+    recordingChunks = [];
+    setAiUI('listening');
+  }
+}
+
+function onAudioChunkFromDevice(event) {
+  if (!isRecording) return;
+  const value = event.target.value;
+  const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  recordingChunks.push(bytes.slice());
+}
+
+// ==========================================================================
+// ALUR SUARA (STT -> LLM -> TTS)
+// ==========================================================================
+async function processAudioQueue() {
+  if (isPlayingQueue || audioQueue.length === 0) return;
+  isPlayingQueue = true;
+  while (audioQueue.length > 0) {
+    const task = audioQueue.shift();
+    try { await task(); } catch (e) { log('❌ Error antrean audio: ' + e.message); }
+  }
+  isPlayingQueue = false;
+}
+
+async function handleRecording() {
+  const resetEspToListening = async () => {
+    try {
+      if (controlInChar) {
+        await controlInChar.writeValue(new TextEncoder().encode('PLAY_START:default'));
+        await controlInChar.writeValue(new TextEncoder().encode('PLAY_END'));
+      }
+    } catch (_) {}
+    setAiUI('listening');
+  };
+
+  try {
+    const groqKey = getVal('groqKey');
+    const elevenKey = getVal('elevenKey');
+
+    if (!groqKey || !elevenKey) {
+      log('⚠️ API Key Groq / ElevenLabs belum diisi!');
+      alert('Mohon isi Groq API Key dan ElevenLabs API Key!');
+      await resetEspToListening();
+      return;
+    }
+
+    if (recordingChunks.length === 0) {
+      log('🤫 Tidak ada rekaman audio masuk.');
+      await resetEspToListening();
+      return;
+    }
+
+    // Penggabungan Chunk Audio dari ESP32
+    let totalLen = 0;
+    for (const c of recordingChunks) totalLen += c.length;
+    const merged = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const c of recordingChunks) { merged.set(c, offset); offset += c.length; }
+    recordingChunks = [];
+
+    const sampleRate = parseInt(getVal('voiceSampleRate', '16000'), 10);
+    const wavBlob = pcmBytesToWavBlob(merged, sampleRate);
+
+// DEBUG SEMENTARA: unduh rekamannya biar bisa didengar langsung
+    const debugUrl = URL.createObjectURL(wavBlob);
+    const debugLink = document.createElement('a');
+    debugLink.href = debugUrl;
+    debugLink.download = 'debug_recording.wav';
+    debugLink.click();
+    URL.revokeObjectURL(debugUrl);
+    log('💾 Rekaman disimpan ke file (cek folder Download HP Anda).');
+
+    log('🗣️ Menerjemahkan suara (Groq Whisper)...');
+    const transcript = await groqTranscribe(wavBlob);
+
+    const rawTranscript = (transcript || '').trim();
+    const cleanedText = rawTranscript.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").trim();
+
+    // Pemfilteran Hening & Halusinasi
+    const hallucinationKeywords = ["terima kasih", "terimakasih", "thanks", "thank you", "subtitles", "amara", "watching", "menonton"];
+    const isTooShort = cleanedText.length < 2;
+    const isHallucination = hallucinationKeywords.some(k => cleanedText.includes(k));
+
+    if (!cleanedText || isTooShort || isHallucination) {
+      log('🤫 Suasana hening / halusinasi. Reset senyap...');
+      await resetEspToListening();
+      return;
+    }
+
+    log('📝 User: "' + rawTranscript + '"');
+    setAiUI('thinking');
+
+    let currentMood = 'default';
+    let isFirstChunk = true;
+
+    // Stream jawaban dari LLM
+    await groqChatStream(
+      rawTranscript,
+      (extractedMood) => { currentMood = extractedMood; },
+      (sentenceText) => {
+        audioQueue.push(async () => {
+          if (isFirstChunk) {
+            setAiUI('speaking');
+            await controlInChar.writeValue(new TextEncoder().encode('PLAY_START:' + currentMood));
+            isFirstChunk = false;
+          }
+
+          log('🔊 Memutar: "' + sentenceText + '"');
+          const mp3Buf = await elevenLabsTts(sentenceText);
+          const pcm = await decodeAndResample(mp3Buf, sampleRate);
+          applyVolume(pcm, volumeFactor);
+
+          const bytes = new Uint8Array(pcm.buffer);
+          const chunkSize = parseInt(getVal('bleChunkSize', '100'), 10);
+          for (let o = 0; o < bytes.length; o += chunkSize) {
+            const chunk = bytes.slice(o, o + chunkSize);
+            await audioInChar.writeValueWithoutResponse(chunk);
+            await new Promise(r => setTimeout(r, 12));
+          }
+        });
+        processAudioQueue();
+      }
+    );
+
+    // Penutup Streaming Audio
+    audioQueue.push(async () => {
+      // Kirim 0.3 detik buffer hening agar suku kata terakhir tidak terpotong
+      const paddingBytes = new Uint8Array(Math.floor(sampleRate * 0.3) * 2);
+      const chunkSize = parseInt(getVal('bleChunkSize', '100'), 10);
+      for (let o = 0; o < paddingBytes.length; o += chunkSize) {
+        const chunk = paddingBytes.slice(o, o + chunkSize);
+        await audioInChar.writeValueWithoutResponse(chunk);
+        await new Promise(r => setTimeout(r, 12));
+      }
+      await new Promise(r => setTimeout(r, 100));
+      await controlInChar.writeValue(new TextEncoder().encode('PLAY_END'));
+      log('✅ Jawaban AI selesai.');
+      setAiUI('listening');
+    });
+
+    processAudioQueue();
+
+  } catch (e) {
+    log('❌ Error: ' + e.message);
+    await resetEspToListening();
+  }
+}
+
+// ==========================================================================
+// API CALLS (Whisper, Groq LLM, ElevenLabs)
+// ==========================================================================
+function pcmBytesToWavBlob(pcmBytes, sampleRate) {
+  const numChannels = 1, bitsPerSample = 16;
+  const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+  const blockAlign = numChannels * bitsPerSample / 8;
+  const dataSize = pcmBytes.length;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  function writeStr(offset, str) {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+  new Uint8Array(buffer, 44).set(pcmBytes);
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+async function groqTranscribe(wavBlob) {
+  const apiKey = getVal('groqKey');
+  const form = new FormData();
+  form.append('file', wavBlob, 'audio.wav');
+  form.append('model', 'whisper-large-v3');
+  form.append('language', 'id');
+  form.append('response_format', 'json');
+
+  const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}` },
+    body: form
+  });
+  if (!res.ok) throw new Error(`Groq STT HTTP ${res.status}`);
+  const data = await res.json();
+  return data.text || '';
+}
+
+async function groqChatStream(userText, onFirstMood, onSentenceChunk) {
+  const apiKey = getVal('groqKey');
+  const model = getVal('groqModel', 'llama-3.3-70b-versatile');
+  const systemPrompt = getVal('systemPrompt', 'Jawab singkat dan ramah.');
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: model,
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userText }],
+      stream: true,
+      temperature: 0.7
+    })
+  });
+
+  if (!res.ok) throw new Error(`Groq LLM HTTP ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '', fullResponse = '', moodExtracted = false, sentenceBuffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed === 'data: [DONE]') continue;
+      if (trimmed.startsWith('data: ')) {
+        try {
+          const parsed = JSON.parse(trimmed.slice(6));
+          const token = parsed.choices?.[0]?.delta?.content || '';
+          if (!token) continue;
+
+          fullResponse += token;
+          sentenceBuffer += token;
+
+          if (!moodExtracted && fullResponse.includes(']')) {
+            const match = fullResponse.match(/^\[(.*?)\]/);
+            onFirstMood(match ? match[1].toLowerCase() : 'default');
+            sentenceBuffer = sentenceBuffer.replace(/^\[.*?\]/, '').trimStart();
+            moodExtracted = true;
+          }
+
+          if (moodExtracted) {
+            // Potong HANYA pada akhir kalimat (. ? ! \n) dengan panjang minimal 12 karakter
+            const matchIndex = sentenceBuffer.search(/[\.\?\!\n]/);
+            if (matchIndex !== -1 && matchIndex >= 12) {
+              const sentence = sentenceBuffer.slice(0, matchIndex + 1).trim();
+              sentenceBuffer = sentenceBuffer.slice(matchIndex + 1);
+              if (sentence) onSentenceChunk(sentence);
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  if (sentenceBuffer.trim().length > 0) {
+    onSentenceChunk(sentenceBuffer.trim());
+  }
+}
+
+async function elevenLabsTts(text) {
+  const apiKey = getVal('elevenKey');
+  const voiceId = getVal('elevenVoiceId', '21m00Tcm4TlvDq8ikWAM');
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?optimize_streaming_latency=3`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+    body: JSON.stringify({
+      text: text,
+      model_id: "eleven_flash_v2_5",
+      voice_settings: { stability: 0.5, similarity_boost: 0.5 }
+    })
+  });
+  if (!res.ok) throw new Error(`ElevenLabs HTTP ${res.status}`);
+  return await res.arrayBuffer();
+}
+
+async function decodeAndResample(mp3ArrayBuffer, targetSampleRate) {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const tempCtx = new AudioCtx();
+  const decoded = await tempCtx.decodeAudioData(mp3ArrayBuffer.slice(0));
+  tempCtx.close();
+
+  const srcRate = decoded.sampleRate;
+  const srcData = decoded.getChannelData(0);
+  const ratio = srcRate / targetSampleRate;
+  const newLength = Math.floor(srcData.length / ratio);
+  const int16 = new Int16Array(newLength);
+
+  for (let i = 0; i < newLength; i++) {
+    const srcIndex = i * ratio;
+    const indexFloor = Math.floor(srcIndex);
+    const indexNext = Math.min(indexFloor + 1, srcData.length - 1);
+    const fraction = srcIndex - indexFloor;
+    const sample = srcData[indexFloor] + fraction * (srcData[indexNext] - srcData[indexFloor]);
+    const s = Math.max(-1, Math.min(1, sample));
+    int16[i] = s < 0 ? s * 32768 : s * 32767;
+  }
+  return int16;
+}
+
+function applyVolume(int16Array, factor) {
+  if (factor === 1.0) return;
+  for (let i = 0; i < int16Array.length; i++) {
+    let v = int16Array[i] * factor;
+    if (v > 32000) v = 32000;
+    if (v < -32000) v = -32000;
+    int16Array[i] = Math.round(v);
+  }
+}
+
+// Event Listeners
+const btnConnect = document.getElementById('btnConnect');
+if (btnConnect) btnConnect.addEventListener('click', connectBLE);
+
+const btnAiToggle = document.getElementById('btnAiToggle');
+if (btnAiToggle) {
+  btnAiToggle.addEventListener('click', async () => {
+    if (!controlInChar) return;
+    try {
+      if (!aiModeOn) {
+        await controlInChar.writeValue(new TextEncoder().encode('AI_ON'));
+        aiModeOn = true;
+        btnAiToggle.textContent = 'Matikan Mode AI';
+        log('🟢 Mode AI Diaktifkan.');
+      } else {
+        await controlInChar.writeValue(new TextEncoder().encode('AI_OFF'));
+        aiModeOn = false;
+        btnAiToggle.textContent = 'Aktifkan Mode AI';
+        setAiUI('idle');
+        log('🔴 Mode AI Dimatikan.');
+      }
+    } catch (e) { log('❌ Gagal Ubah Mode AI: ' + e.message); }
+  });
+}
+
+const volumeSlider = document.getElementById('volumeSlider');
+if (volumeSlider) {
+  volumeSlider.addEventListener('input', () => {
+    volumeFactor = parseInt(volumeSlider.value, 10) / 100;
+    const volumeValue = document.getElementById('volumeValue');
+    if (volumeValue) volumeValue.textContent = volumeSlider.value + '%';
+  });
+}
+</script>
+</body>
+</html>
