@@ -179,7 +179,7 @@
       <div class="row2">
         <div>
           <label for="voiceSampleRate">Sample rate (Hz)</label>
-          <input type="number" id="voiceSampleRate" value="16000">
+          <input type="number" id="voiceSampleRate" value="8000">
         </div>
         <div>
           <label for="bleChunkSize">BLE chunk (bytes)</label>
@@ -492,6 +492,7 @@ async function handleGreeting() {
     await speakAndSend(text, 'happy');
   } catch (e) {
     log('❌ Error sapaan: ' + e.message);
+    await forceDeviceRecover('confused');
   }
 }
 
@@ -500,7 +501,12 @@ async function handleRecording() {
   try {
     if (recordingChunks.length === 0) {
       log('⚠️ Rekaman kosong.');
-      await speakAndSend('Eh gak kedengeran, coba lagi deh.', 'confused');
+      try {
+        await speakAndSend('Eh gak kedengeran, coba lagi deh.', 'confused');
+      } catch (e2) {
+        log('❌ TTS gagal juga: ' + e2.message);
+        await forceDeviceRecover('confused');
+      }
       return;
     }
 
@@ -519,7 +525,12 @@ async function handleRecording() {
     log('📝 "' + transcript + '"');
 
     if (!transcript || transcript.trim().length === 0) {
-      await speakAndSend('Hah? Cooy kurang denger tuh, ulangi dong.', 'confused');
+      try {
+        await speakAndSend('Hah? Cooy kurang denger tuh, ulangi dong.', 'confused');
+      } catch (e2) {
+        log('❌ TTS gagal juga: ' + e2.message);
+        await forceDeviceRecover('confused');
+      }
       return;
     }
 
@@ -528,7 +539,12 @@ async function handleRecording() {
     await speakAndSend(reply, mood);
   } catch (e) {
     log('❌ Error proses AI: ' + e.message);
-    try { await speakAndSend('Waduh, Cooy error nih, coba lagi ya.', 'confused'); } catch (_) {}
+    try {
+      await speakAndSend('Waduh, Cooy error nih, coba lagi ya.', 'confused');
+    } catch (e2) {
+      log('❌ TTS fallback juga gagal: ' + e2.message);
+      await forceDeviceRecover('confused');
+    }
   }
 }
 
@@ -691,6 +707,29 @@ async function sendAudioToDevice(int16Array, mood) {
   }
 
   await controlInChar.writeValue(new TextEncoder().encode('PLAY_END'));
+}
+
+// ---- PENTING: "katup pengaman" -- dipanggil kalau proses TTS/AI gagal
+// total (network putus, API key salah, dll). Firmware itu state machine
+// yang CUMA bisa lanjut kalau nerima PLAY_START lalu PLAY_END dari HP
+// (lihat voiceAssistantTick() di firmware) -- kalau kita cuma nge-log
+// error tanpa kirim apa-apa, device nyangkut selamanya di VOICE_WAITING /
+// VOICE_RECEIVING, "aktif" tapi gak pernah lanjut. Fungsi ini kirim
+// PLAY_START + PLAY_END kosong (tanpa audio) supaya device dipaksa lanjut
+// ke state LISTENING lagi, walau gak ada suara balasan yang keputar.
+async function forceDeviceRecover(mood) {
+  if (!controlInChar) return;  // BLE putus total, gak ada yang bisa dilakukan dari sini
+  try {
+    await controlInChar.writeValue(new TextEncoder().encode('PLAY_START:' + (mood || 'confused')));
+    // Kasih jeda dikit -- device cuma punya SATU slot pesan kontrol
+    // (bukan antrian), jadi PLAY_END gak boleh langsung nimpa PLAY_START
+    // sebelum sempat diproses oleh loop() firmware.
+    await new Promise(r => setTimeout(r, 150));
+    await controlInChar.writeValue(new TextEncoder().encode('PLAY_END'));
+    log('♻️ Device dipulihkan ke state mendengarkan (tanpa audio balasan).');
+  } catch (e) {
+    log('❌ Gagal pulihkan state device: ' + e.message + ' -- coba matikan/nyalakan ulang Mode AI.');
+  }
 }
 
 async function speakAndSend(text, mood) {
